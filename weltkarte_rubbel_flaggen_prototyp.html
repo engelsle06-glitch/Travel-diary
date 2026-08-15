@@ -1,0 +1,117 @@
+<h2 style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;">Interaktive Weltkarte zum Freirubbeln: Länder anklicken, um die Landesflagge im Umriss freizulegen</h2>
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:1rem;flex-wrap:wrap;">
+  <div style="background:var(--surface-1);border-radius:var(--radius);padding:0.75rem 1rem;min-width:110px;">
+    <div style="font-size:13px;color:var(--text-secondary);">Freigerubbelt</div>
+    <div style="font-size:24px;font-weight:500;" id="count">0 / …</div>
+  </div>
+  <div id="last" style="font-size:13px;color:var(--text-secondary);flex:1;min-width:160px;"></div>
+  <button id="reset">Zurücksetzen</button>
+</div>
+<svg id="map" width="100%" viewBox="0 0 960 500" role="img" aria-label="Weltkarte, Länder anklickbar zum Freirubbeln der Landesflagge"></svg>
+<div style="display:flex;gap:16px;margin-top:0.75rem;font-size:12px;color:var(--text-secondary);">
+  <span style="display:flex;align-items:center;gap:6px;"><span style="width:12px;height:12px;border-radius:2px;background:#b8912a;display:inline-block;"></span>Unbesucht</span>
+  <span style="display:flex;align-items:center;gap:6px;"><i class="ti ti-flag" style="font-size:14px;" aria-hidden="true"></i>Besucht, zeigt Flagge</span>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script>
+(function(){
+  var svg = d3.select('#map');
+  var defs = svg.append('defs');
+  var lockedFill = '#b8912a';
+  var isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+  var strokeColor = isDark ? 'rgba(255,255,255,.18)' : 'rgba(0,0,0,.15)';
+  var fallbackPalette = isDark
+    ? ['#3987e5','#d95926','#199e70','#c98500','#d55181','#9085e9']
+    : ['#2a78d6','#eb6834','#1baf7a','#eda100','#e87ba4','#4a3aa7'];
+  function hashColor(name){
+    var h = 0;
+    for (var i=0;i<name.length;i++){ h = (h*31 + name.charCodeAt(i)) >>> 0; }
+    return fallbackPalette[h % fallbackPalette.length];
+  }
+  var revealed = new Set();
+  var built = {};
+  var total = 0;
+  function updateCount(){
+    document.getElementById('count').textContent = revealed.size + ' / ' + total;
+  }
+  var topoUrl = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+  var codesUrl = 'https://cdn.jsdelivr.net/npm/world_countries_lists@latest/data/countries/en/countries.json';
+  Promise.all([d3.json(topoUrl), d3.json(codesUrl)]).then(function(results){
+    var world = results[0];
+    var codes = results[1];
+    var idToAlpha2 = {};
+    codes.forEach(function(c){ idToAlpha2[c.id] = c.alpha2; });
+    var geo = topojson.feature(world, world.objects.countries);
+    total = geo.features.length;
+    updateCount();
+    var projection = d3.geoNaturalEarth1().fitSize([960, 480], geo);
+    var path = d3.geoPath(projection);
+    svg.selectAll('path.country')
+      .data(geo.features)
+      .join('path')
+      .attr('class', 'country')
+      .attr('d', path)
+      .attr('fill', lockedFill)
+      .attr('stroke', strokeColor)
+      .attr('stroke-width', 0.5)
+      .style('cursor', 'pointer')
+      .each(function(d){
+        var t = document.createElementNS('http://www.w3.org/2000/svg','title');
+        t.textContent = d.properties.name;
+        this.appendChild(t);
+        d.__num = d.id !== undefined ? parseInt(d.id, 10) : null;
+        d.__alpha2 = d.__num !== null ? idToAlpha2[d.__num] : undefined;
+      })
+      .on('click', function(event, d){
+        var name = d.properties.name;
+        var key = name + '-' + (d.__num || '');
+        if (revealed.has(key)){
+          revealed.delete(key);
+          d3.select(this).attr('fill', lockedFill);
+          if (built[key]) built[key].style('display', 'none');
+        } else {
+          revealed.add(key);
+          if (d.__alpha2){
+            if (!built[key]){
+              var b = path.bounds(d);
+              var w0 = Math.max(b[1][0] - b[0][0], 1);
+              var h0 = Math.max(b[1][1] - b[0][1], 1);
+              var padX = w0 * 0.05;
+              var padY = h0 * 0.05;
+              var x = b[0][0] - padX;
+              var y = b[0][1] - padY;
+              var w = w0 + padX * 2;
+              var h = h0 + padY * 2;
+              var clipId = 'clip-' + key.replace(/[^a-zA-Z0-9]/g,'');
+              defs.append('clipPath').attr('id', clipId)
+                .append('path').attr('d', path(d));
+              var img = svg.append('image')
+                .attr('x', x).attr('y', y)
+                .attr('width', w).attr('height', h)
+                .attr('preserveAspectRatio', 'none')
+                .attr('clip-path', 'url(#' + clipId + ')')
+                .style('pointer-events', 'none')
+                .attr('href', 'https://cdn.jsdelivr.net/gh/lipis/flag-icons@7.3.2/flags/4x3/' + d.__alpha2 + '.svg');
+              built[key] = img;
+            } else {
+              built[key].style('display', null);
+            }
+            document.getElementById('last').textContent = name + ' freigerubbelt';
+          } else {
+            d3.select(this).attr('fill', hashColor(name));
+            document.getElementById('last').textContent = name + ' freigerubbelt (keine Flagge hinterlegt)';
+          }
+        }
+        updateCount();
+      });
+  });
+  document.getElementById('reset').addEventListener('click', function(){
+    revealed.clear();
+    svg.selectAll('path.country').attr('fill', lockedFill);
+    Object.keys(built).forEach(function(k){ built[k].style('display', 'none'); });
+    document.getElementById('last').textContent = '';
+    updateCount();
+  });
+})();
+</script>
